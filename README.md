@@ -1,5 +1,3 @@
-# Poe API Bot tutorial
+# YT Summarizer Poe
 
-This is the companion repository to the Poe API bot
-[quick start](https://developer.poe.com/api-bots/quick-start). Please follow that guide
-for instructions on how to use this repository.
+This is the source code for the Poe bot that summarizes Youtube videos.
