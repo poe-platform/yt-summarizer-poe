@@ -1,3 +1,3 @@
 # YT Summarizer Poe
 
-This is the source code for the Poe bot that summarizes Youtube videos.
+Summarizes youtube videos. Available for use at: https://poe.com/VideoSummaries
