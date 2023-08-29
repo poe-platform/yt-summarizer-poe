@@ -111,7 +111,7 @@ class YTSummarizerBot(PoeBot):
                 ProtocolMessage(role="system", content=attempted_import_message)
             )
 
-        async for msg in stream_request(query, BOT, query.api_key):
+        async for msg in stream_request(query, BOT, query.access_key):
             if isinstance(msg, MetaMessage):
                 continue
             elif msg.is_suggested_reply:
