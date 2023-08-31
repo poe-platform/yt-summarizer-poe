@@ -6,7 +6,6 @@ Bot that scrapes Youtube transcripts and gives summaries.
 from __future__ import annotations
 
 from typing import AsyncIterable
-from urllib.parse import parse_qs, urlparse
 
 from fastapi_poe import PoeBot
 from fastapi_poe.client import MetaMessage, stream_request
@@ -16,101 +15,118 @@ from fastapi_poe.types import (
     SettingsRequest,
     SettingsResponse,
 )
+from firebase_admin import db
+from pytube import YouTube
+from pytube.helpers import RegexMatchError
 from sse_starlette.sse import ServerSentEvent
 from youtube_transcript_api import YouTubeTranscriptApi
 
 BOT = "claude-instant"
-TEMPLATE = """
-You are a chatbot who imports the transcripts of Youtube videos
-and then can answer questions about them. Start each dialogue with
-a summary of the transcript you've been given
-
-Your output should use the following template:
-
-BEGIN TEMPLATE
-
-### Summary
-{one or two sentence brief summary}
-### Highlights
-- {emoji describing highlight} {brief highlight summary}
-- {emoji describing highlight} {brief highlight summary}
-
-You can use up to 8 highlight bullets, and you must use at least 3.
-At the end of the summary, ask "Is there anything else you'd
-like to know from this video's transcript?"
-
-END TEMPLATE
 
 
-If you are not given a transcript or a link, please give actionable
-steps to the user. They must send you a valid Youtube link as a standalone
-message in order to enable sending the message, and it's also possible
-that your transcript import can fail because the video is too long
-or the captions are not enabled. Generally, you can handle videos <25 minutes long.
-Any time there was an error, do not follow the template above or invent
-a summary. ONLY use given transcripts for summaries.
+def get_summary_prompt(transcript: str):
+    return f"""
+You are the YouTube Summarizer that specializes in summarising videos shorter than 20
+minutes and responding to questions about the video.
 
-If users send you a new link and you import a new transcript, you should
-assume that they're done with the old one and are ready to ask
-questions about the new one.
-"""
+What follows is the transcript of a YouTube video. Please provide a summarization of the video
+using bullet points. At the end of the summary, ask the user if they'd like to know
+anything else about the video.
 
-SETTINGS = SettingsResponse(
-    allow_user_context_clear=True, context_clear_window_secs=60 * 5
-)
+Transcript: {transcript}"""
 
 
-def get_transcript_text(video_id):
+def get_video_object(link: str):
+    try:
+        return YouTube(link)
+    except RegexMatchError:
+        return None
+
+
+def check_video_length(video: YouTube):
+    return video.length <= 20 * 60
+
+
+def compute_transcript_text(video_id: str):
     raw_transcript = YouTubeTranscriptApi.get_transcript(video_id)
     text_transcript = "\n".join([item["text"] for item in raw_transcript])
     return text_transcript
 
 
-def get_video_id(link):
-    try:
-        query = urlparse(link)
-        if query.hostname == "youtu.be":
-            return query.path[1:]
-        if query.hostname in ("www.youtube.com", "youtube.com"):
-            if query.path == "/watch":
-                p = parse_qs(query.query)
-                return p["v"][0]
-            if query.path[:7] == "/embed/":
-                return query.path.split("/")[2]
-            if query.path[:3] == "/v/":
-                return query.path.split("/")[2]
+def get_cached_video_transcript(video_id: str):
+    ref = db.reference("/transcripts")
+    data = ref.child(video_id).get()
+    if data is not None:
+        return data.get("value")
 
-    # any failure should go to returning None
-    except Exception:
-        pass
 
-    return None
+def cache_video_transcript(video_id: str, transcript: str):
+    ref = db.reference("/transcripts")
+    ref.child(video_id).set({"value": transcript})
+
+
+def get_video_transcript(video: YouTube):
+    video_id = video.video_id
+    cached_transcript = get_cached_video_transcript(video_id)
+    if cached_transcript:
+        return cached_transcript
+
+    transcript = compute_transcript_text(video_id)
+    cache_video_transcript(video_id, transcript)
+    return transcript
+
+
+def _get_video_message(query: QueryRequest):
+    for message in reversed(query.query):
+        if message.role == "user" and (
+            message.content.startswith("http://")
+            or message.content.startswith("https://")
+        ):
+            return message
+
+
+def _get_relevant_subchat(query: QueryRequest) -> list[ProtocolMessage]:
+    subchat = []
+    for message in reversed(query.query):
+        subchat.append(message)
+        if message.role == "user" and (
+            message.content.startswith("http://")
+            or message.content.startswith("https://")
+        ):
+            return list(reversed(subchat))
+    return []
 
 
 class YTSummarizerBot(PoeBot):
     async def get_response(self, query: QueryRequest) -> AsyncIterable[ServerSentEvent]:
-        # prepend system message onto query
-        query.query = [ProtocolMessage(role="system", content=TEMPLATE)] + query.query
-
-        last_message = query.query[-1]
-        video_id = get_video_id(last_message.content)
-        if video_id:
+        relevant_subchat = _get_relevant_subchat(query)
+        if not relevant_subchat:
             yield self.text_event(
-                "\n\nOne moment while I import the transcript for your video...\n\n"
+                "Please provide a link to the Youtube video you would like to discuss."
             )
-            try:
-                transcript_text = get_transcript_text(video_id)
-                assert (
-                    len(transcript_text) < 30000
-                ), "Transcript too long for LLM context window"
-                attempted_import_message = f"TRANSCRIPT IMPORTED:\n {transcript_text}"
-            except Exception as e:
-                attempted_import_message = f"Transcript import failed. Error was {e}"
+            return
 
-            query.query.append(
-                ProtocolMessage(role="system", content=attempted_import_message)
+        video_message = relevant_subchat[0]
+        video = YouTube(video_message.content)
+        if not check_video_length(video):
+            yield self.text_event(
+                "Videos longer than 20 minutes are not supported. Please provide a new video url."
             )
+            return
+        transcript = get_video_transcript(video)
 
+        if len(transcript) > 30000:
+            yield self.text_event(
+                "The transcript is too long. Please provide a new video url."
+            )
+            return
+
+        for message in relevant_subchat:
+            if message.message_id == relevant_subchat[0].message_id:
+                message.content = get_summary_prompt(transcript)
+
+        print(f"relevant subchat is {relevant_subchat}")
+        query.query = relevant_subchat
         async for msg in stream_request(query, BOT, query.access_key):
             if isinstance(msg, MetaMessage):
                 continue
@@ -122,5 +138,9 @@ class YTSummarizerBot(PoeBot):
                 yield self.text_event(msg.text)
 
     async def get_settings(self, settings: SettingsRequest) -> SettingsResponse:
-        """Return the settings for this bot."""
-        return SETTINGS
+        return SettingsResponse(
+            introduction_message=(
+                "Hi, I am the YouTube Summarizer. Please provide me with the YouTube link "
+                "for a video shorter no longer than 20 minutes."
+            )
+        )
