@@ -102,7 +102,7 @@ class YTSummarizerBot(PoeBot):
         relevant_subchat = _get_relevant_subchat(query)
         if not relevant_subchat:
             yield self.text_event(
-                "Please provide a link to the Youtube video you would like to discuss."
+                "Please provide a link to the Youtube video you would like me to summarize."
             )
             return
 
@@ -110,14 +110,14 @@ class YTSummarizerBot(PoeBot):
         video = YouTube(video_message.content)
         if not check_video_length(video):
             yield self.text_event(
-                "Videos longer than 20 minutes are not supported. Please provide a new video url."
+                "Error: The video is longer than 20 minutes. Please provide a new video url."
             )
             return
         transcript = get_video_transcript(video)
 
         if len(transcript) > 30000:
             yield self.text_event(
-                "The transcript is too long. Please provide a new video url."
+                "Error: The transcript is too long. Please provide a new video url."
             )
             return
 
@@ -140,7 +140,7 @@ class YTSummarizerBot(PoeBot):
     async def get_settings(self, settings: SettingsRequest) -> SettingsResponse:
         return SettingsResponse(
             introduction_message=(
-                "Hi, I am the YouTube Summarizer. Please provide me with the YouTube link "
-                "for a video shorter no longer than 20 minutes."
+                "Hi, I am the YouTube Summarizer. Please provide me a YouTube link for a "
+                "video that is up to 20 minutes in length and I can summarize it for you."
             )
         )
