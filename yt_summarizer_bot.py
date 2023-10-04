@@ -125,7 +125,6 @@ class YTSummarizerBot(PoeBot):
             if message.message_id == relevant_subchat[0].message_id:
                 message.content = get_summary_prompt(transcript)
 
-        print(f"relevant subchat is {relevant_subchat}")
         query.query = relevant_subchat
         async for msg in stream_request(query, BOT, query.access_key):
             if isinstance(msg, MetaMessage):
@@ -142,5 +141,6 @@ class YTSummarizerBot(PoeBot):
             introduction_message=(
                 "Hi, I am the YouTube Summarizer. Please provide me a YouTube link for a "
                 "video that is up to 20 minutes in length and I can summarize it for you."
-            )
+            ),
+            server_bot_dependencies={BOT: 1}
         )
