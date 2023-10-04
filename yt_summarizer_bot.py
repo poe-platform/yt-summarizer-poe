@@ -20,6 +20,7 @@ from pytube import YouTube
 from pytube.helpers import RegexMatchError
 from sse_starlette.sse import ServerSentEvent
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled
 
 BOT = "claude-instant"
 
@@ -113,7 +114,14 @@ class YTSummarizerBot(PoeBot):
                 "Error: The video is longer than 20 minutes. Please provide a new video url."
             )
             return
-        transcript = get_video_transcript(video)
+
+        try:
+            transcript = get_video_transcript(video)
+        except TranscriptsDisabled:
+            yield self.text_event(
+                "Error: Transcripts are disabled for this video. Please provide a new video url."
+            )
+            return
 
         if len(transcript) > 30000:
             yield self.text_event(
@@ -142,5 +150,5 @@ class YTSummarizerBot(PoeBot):
                 "Hi, I am the YouTube Summarizer. Please provide me a YouTube link for a "
                 "video that is up to 20 minutes in length and I can summarize it for you."
             ),
-            server_bot_dependencies={BOT: 1}
+            server_bot_dependencies={BOT: 1},
         )
