@@ -8,7 +8,6 @@ from modal import Image, Secret, Stub, asgi_app
 
 from yt_summarizer_bot import YTSummarizerBot
 
-# specific to hosting with modal.com
 image = Image.debian_slim().pip_install_from_requirements("requirements.txt")
 stub = Stub("yt-summarizer-app")
 
